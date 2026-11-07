@@ -4,10 +4,15 @@ import android.Manifest
 import android.app.Activity
 import android.content.pm.PackageManager
 import android.graphics.Color
+import android.media.AudioDeviceInfo
 import android.media.AudioFormat
+import android.media.AudioManager
 import android.media.AudioRecord
 import android.media.MediaPlayer
 import android.media.MediaRecorder
+import android.media.audiofx.AcousticEchoCanceler
+import android.media.audiofx.NoiseSuppressor
+import android.os.Build
 import android.os.Bundle
 import android.view.Choreographer
 import android.view.Gravity
@@ -37,6 +42,7 @@ class PracticeActivity : Activity() {
     private lateinit var infoText: TextView
     private lateinit var hintText: TextView
     private lateinit var scoreText: TextView
+    private lateinit var warnText: TextView
     private lateinit var timeText: TextView
     private lateinit var positionBar: SeekBar
     private lateinit var playButton: Button
@@ -53,7 +59,9 @@ class PracticeActivity : Activity() {
     // Microfono
     @Volatile private var micRunning = false
     private var micThread: Thread? = null
-    private val recentUser = ArrayDeque<Float>()
+    private val tracker = PitchTracker()
+    private val octaveVotes = ArrayDeque<Int>()
+    private var octaveShift = 0
 
     // Punteggio
     private var scoredFrames = 0
@@ -73,7 +81,7 @@ class PracticeActivity : Activity() {
         }
         try {
             song = found
-            track = PitchTrack.load(File(found.pitchPath))
+            track = PitchTrack.load(File(found.pitchPath)).cleaned()
             player = MediaPlayer().apply {
                 setDataSource(found.instrumentalPath)
                 prepare()
@@ -117,6 +125,15 @@ class PracticeActivity : Activity() {
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
         }, LinearLayout.LayoutParams(full, wrap))
+
+        warnText = TextView(this).apply {
+            text = "Collega le cuffie: senza, il microfono capta anche la base e disturba il confronto"
+            textSize = 13f
+            setTextColor(Color.parseColor("#E9A23B"))
+            gravity = Gravity.CENTER
+            visibility = android.view.View.GONE
+        }
+        root.addView(warnText, LinearLayout.LayoutParams(full, wrap))
 
         graph = PitchGraphView(this)
         root.addView(graph, LinearLayout.LayoutParams(full, 0, 1f).apply { topMargin = dp(4) })
@@ -256,6 +273,8 @@ class PracticeActivity : Activity() {
         player.seekTo(target)
         guidePlayer?.seekTo(target)
         graph.seekTo(target, player.isPlaying)
+        tracker.reset()
+        octaveVotes.clear()
         positionBar.progress = target
         timeText.text = LibraryActivity.formatTime(target) + " / " + LibraryActivity.formatTime(player.duration)
     }
@@ -318,6 +337,7 @@ class PracticeActivity : Activity() {
         super.onResume()
         if (!ready) return
         alive = true
+        updateHeadphoneWarning()
         Choreographer.getInstance().postFrameCallback(frameCallback)
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
             startMic()
@@ -368,7 +388,7 @@ class PracticeActivity : Activity() {
         )
         val recorder = try {
             AudioRecord(
-                MediaRecorder.AudioSource.MIC, sampleRate,
+                MediaRecorder.AudioSource.VOICE_COMMUNICATION, sampleRate,
                 AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT,
                 maxOf(minBuf, hopSize * 8)
             )
@@ -382,6 +402,22 @@ class PracticeActivity : Activity() {
             return
         }
 
+        val echoCanceler = try {
+            if (AcousticEchoCanceler.isAvailable()) {
+                AcousticEchoCanceler.create(recorder.audioSessionId)?.also { it.enabled = true }
+            } else null
+        } catch (e: Exception) {
+            null
+        }
+        val noiseSuppressor = try {
+            if (NoiseSuppressor.isAvailable()) {
+                NoiseSuppressor.create(recorder.audioSessionId)?.also { it.enabled = true }
+            } else null
+        } catch (e: Exception) {
+            null
+        }
+
+        tracker.reset()
         micRunning = true
         micThread = Thread {
             val window = FloatArray(windowSize)
@@ -402,7 +438,7 @@ class PracticeActivity : Activity() {
                     }
                     System.arraycopy(window, hopSize, window, 0, windowSize - hopSize)
                     for (i in 0 until hopSize) window[windowSize - hopSize + i] = chunk[i] / 32768f
-                    val f = PitchDetector.detect(window, sampleRate, 70f, 1000f, 0.01f)
+                    val f = PitchDetector.detect(window, sampleRate, 70f, 1000f, 0.015f, 0.10f)
                     runOnUiThread { if (micRunning) onUserPitch(f) }
                 }
             } catch (e: InterruptedException) {
@@ -413,6 +449,8 @@ class PracticeActivity : Activity() {
                 } catch (e: IllegalStateException) {
                 }
                 recorder.release()
+                echoCanceler?.release()
+                noiseSuppressor?.release()
             }
         }.also { it.start() }
     }
@@ -426,24 +464,32 @@ class PracticeActivity : Activity() {
     // ---------- Confronto con la voce originale ----------
 
     private fun onUserPitch(freq: Float) {
-        if (freq <= 0f) {
-            recentUser.clear()
-            infoText.text = "Originale: " + refName(graph.currentMs()) + "    Tu: –"
-            hintText.text = ""
+        val raw = if (freq > 0f) (69.0 + 12.0 * ln(freq / 440.0) / ln(2.0)).toFloat() else Float.NaN
+        val stable = tracker.update(raw)
+
+        if (stable.isNaN()) {
+            if (raw.isNaN()) {
+                infoText.text = "Originale: " + refName(graph.currentMs()) + "    Tu: –"
+                hintText.text = ""
+            }
             return
         }
 
-        val raw = (69.0 + 12.0 * ln(freq / 440.0) / ln(2.0)).toFloat()
-        recentUser.addLast(raw)
-        if (recentUser.size > 3) recentUser.removeFirst()
-        var m = recentUser.sorted()[recentUser.size / 2]
-
         val tMs = graph.currentMs() - latencyMs - 23
         val ref = track.nearestVoiced(tMs / 1000f, 3)
-        if (ignoreOctave && !ref.isNaN()) {
-            m += 12f * Math.round((ref - m) / 12f)
+
+        // Differenza di ottava costante: si stima dagli ultimi istanti, non frame per frame
+        if (ignoreOctave) {
+            if (!ref.isNaN()) {
+                octaveVotes.addLast(Math.round((ref - stable) / 12f))
+                if (octaveVotes.size > 30) octaveVotes.removeFirst()
+                octaveShift = octaveVotes.groupingBy { it }.eachCount().maxByOrNull { it.value }!!.key
+            }
+        } else {
+            octaveShift = 0
         }
-        val ok = !ref.isNaN() && abs(m - ref) <= 0.5f
+        val m = stable + 12f * octaveShift
+        val ok = !ref.isNaN() && abs(m - ref) <= OK_TOLERANCE
 
         if (player.isPlaying) {
             graph.addUser(tMs, m, ok)
@@ -463,18 +509,31 @@ class PracticeActivity : Activity() {
         } else {
             val diff = ref - m
             hintText.text = when {
-                abs(diff) <= 0.5f -> "Perfetto!"
+                abs(diff) <= OK_TOLERANCE -> "Perfetto!"
                 diff > 0 -> "Più acuta ↑ (" + abs(diff).roundToInt() + " semitoni)"
                 else -> "Più grave ↓ (" + abs(diff).roundToInt() + " semitoni)"
             }
             hintText.setTextColor(
                 when {
-                    abs(diff) <= 0.5f -> Color.parseColor("#4CAF50")
+                    abs(diff) <= OK_TOLERANCE -> Color.parseColor("#4CAF50")
                     abs(diff) <= 1.5f -> Color.parseColor("#E9A23B")
                     else -> Color.parseColor("#C0362C")
                 }
             )
         }
+    }
+
+    private fun updateHeadphoneWarning() {
+        val am = getSystemService(AUDIO_SERVICE) as AudioManager
+        val connected = am.getDevices(AudioManager.GET_DEVICES_OUTPUTS).any {
+            it.type == AudioDeviceInfo.TYPE_WIRED_HEADPHONES ||
+                it.type == AudioDeviceInfo.TYPE_WIRED_HEADSET ||
+                it.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP ||
+                it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
+                it.type == AudioDeviceInfo.TYPE_USB_HEADSET ||
+                (Build.VERSION.SDK_INT >= 31 && it.type == AudioDeviceInfo.TYPE_BLE_HEADSET)
+        }
+        warnText.visibility = if (connected) android.view.View.GONE else android.view.View.VISIBLE
     }
 
     private fun refName(ms: Int): String {
@@ -485,5 +544,6 @@ class PracticeActivity : Activity() {
     companion object {
         const val EXTRA_SONG_ID = "song_id"
         private const val REQUEST_AUDIO = 1
+        private const val OK_TOLERANCE = 0.7f
     }
 }

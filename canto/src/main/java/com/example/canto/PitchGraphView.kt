@@ -150,7 +150,7 @@ class PitchGraphView(context: Context) : View(context) {
                 if (!a.isNaN()) {
                     val xa = xOf((i * hopMs).toInt())
                     val ya = yOf(a)
-                    if (!b.isNaN() && abs(b - a) < 6f) {
+                    if (!b.isNaN() && abs(b - a) < 4f) {
                         canvas.drawLine(xa, ya, xOf(((i + 1) * hopMs).toInt()), yOf(b), refPaint)
                     } else {
                         canvas.drawPoint(xa, ya, refPaint)
@@ -175,7 +175,7 @@ class PitchGraphView(context: Context) : View(context) {
                 userLinePaint.color = if (p.ok) green else orange
                 val x = xOf(p.tMs)
                 val y = yOf(p.midi)
-                if (prev != null && p.tMs - prev.tMs <= 120) {
+                if (prev != null && p.tMs - prev.tMs <= 120 && abs(p.midi - prev.midi) <= 2f) {
                     canvas.drawLine(xOf(prev.tMs), yOf(prev.midi), x, y, userLinePaint)
                 } else {
                     canvas.drawCircle(x, y, 3f * d, userLinePaint)

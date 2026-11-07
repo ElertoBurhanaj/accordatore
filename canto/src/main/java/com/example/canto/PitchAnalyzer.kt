@@ -67,6 +67,6 @@ object PitchAnalyzer {
         }
 
         onProgress(1f)
-        return PitchTrack(hop.toFloat() / sr, med)
+        return PitchTrack(hop.toFloat() / sr, med).cleaned()
     }
 }

@@ -7,6 +7,7 @@ import java.io.DataOutputStream
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.roundToInt
@@ -43,6 +44,81 @@ class PitchTrack(val hopSec: Float, val midi: FloatArray) {
             hi = mid + 6f
         }
         return Pair(lo, hi)
+    }
+
+    /** Elimina picchi isolati e brevi segmenti lontani dal resto (tipici errori di ottava). */
+    fun cleaned(): PitchTrack {
+        val n = midi.size
+        val out = midi.copyOf()
+
+        fun voicedNear(i: Int, step: Int, maxDist: Int): Float {
+            var k = 1
+            while (k <= maxDist) {
+                val j = i + step * k
+                if (j < 0 || j >= n) return Float.NaN
+                if (!midi[j].isNaN()) return midi[j]
+                k++
+            }
+            return Float.NaN
+        }
+
+        // 1) Frame isolati che contraddicono sia il precedente sia il successivo
+        for (i in 0 until n) {
+            val v = midi[i]
+            if (v.isNaN()) continue
+            val p = voicedNear(i, -1, 3)
+            val q = voicedNear(i, 1, 3)
+            if (!p.isNaN() && !q.isNaN() && abs(p - q) <= 3f && abs(v - p) > 4f && abs(v - q) > 4f) {
+                out[i] = Float.NaN
+            }
+        }
+
+        // 2) Segmenti brevi e lontani dalle note vicine
+        var i = 0
+        while (i < n) {
+            if (out[i].isNaN()) {
+                i++
+                continue
+            }
+            var j = i
+            var sum = 0f
+            while (j < n && !out[j].isNaN()) {
+                sum += out[j]
+                j++
+            }
+            val len = j - i
+            val mean = sum / len
+            if (len < 4) {
+                for (k in i until j) out[k] = Float.NaN
+            } else if (len < 8) {
+                var before = Float.NaN
+                var after = Float.NaN
+                var k = i - 1
+                while (k >= 0 && k >= i - 25) {
+                    if (!out[k].isNaN()) {
+                        before = out[k]
+                        break
+                    }
+                    k--
+                }
+                k = j
+                while (k < n && k < j + 25) {
+                    if (!out[k].isNaN()) {
+                        after = out[k]
+                        break
+                    }
+                    k++
+                }
+                val farFromBefore = before.isNaN() || abs(mean - before) > 9f
+                val farFromAfter = after.isNaN() || abs(mean - after) > 9f
+                val hasNeighbor = !before.isNaN() || !after.isNaN()
+                if (farFromBefore && farFromAfter && (hasNeighbor || len < 6)) {
+                    for (m in i until j) out[m] = Float.NaN
+                }
+            }
+            i = j
+        }
+        return PitchTrack(hopSec, out)
     }
 
     fun save(file: File) {

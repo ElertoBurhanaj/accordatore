@@ -8,14 +8,13 @@ import kotlin.math.sqrt
  */
 object PitchDetector {
 
-    private const val THRESHOLD = 0.15f
-
     fun detect(
         buffer: FloatArray,
         sampleRate: Int,
         minHz: Float,
         maxHz: Float,
-        minRms: Float
+        minRms: Float,
+        threshold: Float = 0.15f
     ): Float {
         val half = buffer.size / 2
         val tauMax = minOf(half - 1, (sampleRate / minHz).toInt())
@@ -43,7 +42,7 @@ object PitchDetector {
         var tauEstimate = -1
         var tau = tauMin
         while (tau <= tauMax) {
-            if (cmnd[tau] < THRESHOLD) {
+            if (cmnd[tau] < threshold) {
                 while (tau + 1 <= tauMax && cmnd[tau + 1] < cmnd[tau]) tau++
                 tauEstimate = tau
                 break
