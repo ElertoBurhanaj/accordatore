@@ -29,34 +29,3 @@ jobs:
         with:
           name: Intona-apk
           path: canto-nuovo/build/outputs/apk/debug/canto-nuovo-debug.apk
-name: Build APK
-on:
-  push:
-  workflow_dispatch:
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 17
-      - uses: gradle/actions/setup-gradle@v4
-      - name: Build debug APKs
-        run: |
-          chmod +x gradlew
-          ./gradlew :app:assembleDebug :canto:assembleDebug :canto-nuovo:assembleDebug
-      - uses: actions/upload-artifact@v4
-        with:
-          name: Accordatore-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
-      - uses: actions/upload-artifact@v4
-        with:
-          name: Canto-apk
-          path: canto/build/outputs/apk/debug/canto-debug.apk
-      - uses: actions/upload-artifact@v4
-        with:
-          name: Intona-apk
-          path: canto-nuovo/build/outputs/apk/debug/canto-nuovo-debug.apk
