@@ -1,5 +1,6 @@
 name: Build APK
 on:
+  push:
   workflow_dispatch:
 
 jobs:
@@ -15,7 +16,7 @@ jobs:
       - name: Build debug APKs
         run: |
           chmod +x gradlew
-          ./gradlew :app:assembleDebug :canto:assembleDebug
+          ./gradlew :app:assembleDebug :canto:assembleDebug :canto-nuovo:assembleDebug
       - uses: actions/upload-artifact@v4
         with:
           name: Accordatore-apk
@@ -24,3 +25,7 @@ jobs:
         with:
           name: Canto-apk
           path: canto/build/outputs/apk/debug/canto-debug.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Intona-apk
+          path: canto-nuovo/build/outputs/apk/debug/canto-nuovo-debug.apk
