@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="file" path="songs/" />
+        <exclude domain="file" path="songs.json" />
+        <exclude domain="file" path="songs.json.tmp" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="file" path="songs/" />
+        <exclude domain="file" path="songs.json" />
+        <exclude domain="file" path="songs.json.tmp" />
+    </device-transfer>
+</data-extraction-rules>
