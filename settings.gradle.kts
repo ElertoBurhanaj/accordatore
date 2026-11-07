@@ -15,3 +15,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "Accordatore"
 include(":app")
+include(":canto")
